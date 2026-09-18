@@ -38,3 +38,27 @@ their saved plans separate from production. The preview starts with no saved
 production plans; use the app's export/import controls to copy plans for testing.
 Normal production builds retain the existing storage keys. The deployed preview
 commit can be checked at `codex-review/version.json`.
+
+## Cutting and shop settings
+
+- New jobs enable part grouping and disable saved remnants. Enable **Allow
+  remnants** to classify reusable drops, credit them toward net yield, and use
+  the remnant preference. Existing explicit grouping choices in saved jobs are
+  preserved.
+- **Blade & edges → Plate thickness preset** applies the 15 entries supplied in
+  `Blade and Edges Presets.xlsx` (Sheet1, rows 2–16). The cut allowance applies to
+  both directions; the edge allowance applies separately to each of four sides.
+  Editing a value switches to Custom. Selecting Custom retains the current values.
+- The four search-effort buttons set the time per search phase. Grouping uses
+  separate baseline and grouped phases.
+- After nesting, the cut sequencer compares alternate guillotine trees for each
+  selected layout, minimizing cut count first and total cut length second. It
+  can trim a common edge before separating parts. It preserves part geometry,
+  kerf, first-cut direction, stage limits, and enabled saved remnants. The search
+  is bounded for responsiveness and keeps the original valid sequence if it
+  cannot improve it; this is not a guarantee of a global minimum. Initial blank
+  edge trims are still performed before the listed production cuts.
+- Printing works from Results and Report. Report options control the printed
+  copy, including cut sequences when layout drawings are unchecked.
+
+Run `npm test` for the cutting-geometry, settings and storage regression tests.
