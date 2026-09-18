@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Scissors, Play, Square, Printer, Upload, Download, Save, FolderOpen,
   Plus, Trash2, ChevronLeft, ChevronRight, X, FileText, ClipboardPaste,
-  Zap, Gauge, Search, Timer, Check,
+  Zap, Gauge, Search, Timer, Check, TriangleAlert,
 } from 'lucide-react';
 import {
   refineResultCuts,
@@ -11,7 +11,7 @@ import {
 import {
   parseDim, fmtDim, fmtArea, CUT_TYPES,
   findOversize, GROUPING_TUNING, deriveSeeds, baselineOptHashOf,
-  fullResultHashOf, yieldLossAllowancePP, normalizeGroupPolicy, buildFamilies,
+  fullResultHashOf, groupingAllowancePP, normalizeGroupPolicy, buildFamilies,
   estimateAllFamilies, tagRunsCleanup, buildLevelResults, runSearch,
 } from './engine.js';
 import { DEFAULT_SETTINGS, BLADE_PRESETS, presetSettings, matchingPreset } from './settings.js';
@@ -142,13 +142,14 @@ function IntInput({ value, onCommit, className, min = 0, disabled }) {
   );
 }
 
-function FloatInput({ value, onCommit, className, placeholder }) {
+function FloatInput({ value, onCommit, className, placeholder, ariaLabel }) {
   const [draft, setDraft] = useState(null);
   const shown = draft != null ? draft : (value == null || Number.isNaN(value) ? '' : String(value));
   return (
     <input
       type="text"
       inputMode="decimal"
+      aria-label={ariaLabel}
       value={shown}
       placeholder={placeholder || ''}
       onFocus={(e) => { setDraft(shown); e.target.select(); }}
@@ -781,7 +782,7 @@ function LevelCompareTable({ result, activeAggr, onPick }) {
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-baseline justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
-        <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Grouping levels — same search, five answers</div>
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Grouping levels — same search, {result.levelResults.length} answers</div>
         <div className="text-xs text-slate-400">Click a row to preview it — no re-run needed</div>
       </div>
       <table className="w-full border-collapse text-sm">
@@ -1117,6 +1118,9 @@ export default function App() {
 
   const fmt = { dispFormat: plan.settings.dispFormat, fracDen: plan.settings.fracDen };
   const s = plan.settings;
+  const groupingAggression = s.groupingAggression ?? DEFAULT_SETTINGS.groupingAggression;
+  const groupingAllowance = groupingAllowancePP(s);
+  const groupingLossWarning = s.groupingEnabled && groupingAllowance > 5;
 
   const say = (msg, type = 'info') => {
     setNotice({ msg, type });
@@ -1256,7 +1260,7 @@ export default function App() {
 
     setProgress({ phase: 'Selecting comparison plans', iters: 0, elapsed: 0, denomMs: null, best: null });
     await sleep(0);
-    const selectedAggression = Math.max(0, Math.min(100, Math.round(s.groupingAggression ?? 50)));
+    const selectedAggression = Math.max(0, Math.min(100, Math.round(s.groupingAggression ?? DEFAULT_SETTINGS.groupingAggression)));
     if (!gr || !gr.archive || !gr.archive.length || !gr.benchmark) {
       tagRunsCleanup(base.baselineSol, gctx.cleanupPids);
       await finish({ sol: base.baselineSol, hash: runHashes.full, baselineHash: runHashes.baseline, oversize, iters: base.iters + (gr ? gr.iters : 0), ms: performance.now() - t0, grouping: null });
@@ -1749,31 +1753,42 @@ export default function App() {
                   </label>
                 </div>
                 <div className={cls(!s.groupingEnabled && 'pointer-events-none opacity-50')}>
-                  <div className="mb-1 flex items-baseline justify-between">
-                    <label className="block text-xs font-semibold text-slate-500">
-                      Grouping strength — {s.groupingAggression}
+                  <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <label htmlFor="grouping-strength" className="block text-xs font-semibold text-slate-500">
+                      Grouping strength — {GROUPING_TUNING.presets.find((p) => p.aggression === groupingAggression)?.label || `Custom (${groupingAggression})`}
                     </label>
-                    <div className="text-xs text-slate-500">
-                      {s.groupingMaxYieldLossPP != null
-                        ? `Manual cap: up to ${Number(s.groupingMaxYieldLossPP).toFixed(2)} pp gross-yield loss (overrides the slider's allowance)`
-                        : `Accepts up to ${yieldLossAllowancePP(s.groupingAggression).toFixed(2)} pp of gross-yield loss for tighter grouping`}
+                    <div id="grouping-allowance" className="text-xs text-slate-500">
+                      {s.groupingMaxYieldLossPP != null && isFinite(s.groupingMaxYieldLossPP)
+                        ? `Manual cap: up to ${groupingAllowance.toFixed(2)} pp gross-yield loss (overrides the slider's allowance)`
+                        : `Accepts up to ${groupingAllowance.toFixed(2)} pp of gross-yield loss for tighter grouping`}
                     </div>
                   </div>
-                  <input type="range" min={0} max={100} value={s.groupingAggression}
-                    onChange={(e) => setSettings({ groupingAggression: parseInt(e.target.value, 10) })} className="w-full" />
-                  <div className="mb-3 flex justify-between text-xs text-slate-500">
+                  <input id="grouping-strength" type="range" min={0} max={100} value={groupingAggression}
+                    aria-describedby={groupingLossWarning ? 'grouping-allowance grouping-warning' : 'grouping-allowance'}
+                    onChange={(e) => setSettings({ groupingAggression: parseInt(e.target.value, 10) })}
+                    className={cls('w-full', groupingLossWarning ? 'accent-amber-600' : 'accent-blue-600')} />
+                  <div className="relative mb-3 h-6 text-xs text-slate-500">
                     {GROUPING_TUNING.presets.map((p) => (
-                      <button key={p.aggression} onClick={() => setSettings({ groupingAggression: p.aggression })}
-                        className={cls('rounded px-1 hover:bg-slate-100',
-                          s.groupingAggression === p.aggression && 'font-bold text-blue-700')}>
+                      <button key={p.aggression} type="button" aria-pressed={groupingAggression === p.aggression}
+                        onClick={() => setSettings({ groupingAggression: p.aggression })}
+                        style={{ left: `${p.aggression}%`, transform: `translateX(${p.aggression === 0 ? 0 : p.aggression === 100 ? -100 : -50}%)` }}
+                        className={cls('absolute whitespace-nowrap rounded px-1 py-1 hover:bg-slate-100',
+                          groupingAggression === p.aggression && (groupingLossWarning ? 'font-bold text-amber-700' : 'font-bold text-blue-700'))}>
                         {p.label}
                       </button>
                     ))}
                   </div>
+                  {groupingLossWarning && (
+                    <div id="grouping-warning" role="status" className="mb-3 flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                      <TriangleAlert size={16} aria-hidden="true" className="shrink-0" />
+                      High yield-loss allowance: up to {groupingAllowance.toFixed(2)} pp (above 5 pp).
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <div>
                       <label className="mb-1 block text-xs font-semibold text-slate-500">Max gross-yield loss (pp)</label>
                       <FloatInput value={s.groupingMaxYieldLossPP} placeholder="auto"
+                        ariaLabel="Max gross-yield loss (pp)"
                         onCommit={(v) => setSettings({ groupingMaxYieldLossPP: v })} />
                     </div>
                     <div>

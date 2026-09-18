@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DEFAULT_SETTINGS, BLADE_PRESETS, presetSettings, matchingPreset } from './settings.js';
 
-test('new jobs default to grouping enabled and remnants disabled', () => {
+test('new jobs default to Strong grouping and remnants disabled', () => {
   assert.equal(DEFAULT_SETTINGS.groupingEnabled, true);
+  assert.equal(DEFAULT_SETTINGS.groupingAggression, 75);
   assert.equal(DEFAULT_SETTINGS.remnantsEnabled, false);
 });
 

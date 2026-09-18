@@ -41,10 +41,14 @@ commit can be checked at `codex-review/version.json`.
 
 ## Cutting and shop settings
 
-- New jobs enable part grouping and disable saved remnants. Enable **Allow
+- New jobs enable **Strong** part grouping and disable saved remnants. Enable **Allow
   remnants** to classify reusable drops, credit them toward net yield, and use
   the remnant preference. Existing explicit grouping choices in saved jobs are
   preserved.
+- Grouping presets allow gross-yield losses of **0 pp** (Yield First), **2.5 pp**
+  (Balanced), **5 pp** (Strong), and **8 pp** (Ultra). Slider values between presets
+  interpolate those caps. The bar shows an amber warning above **5 pp**, including
+  when a manual loss cap overrides the slider.
 - **Blade & edges → Plate thickness preset** applies the 15 entries supplied in
   `Blade and Edges Presets.xlsx` (Sheet1, rows 2–16). The cut allowance applies to
   both directions; the edge allowance applies separately to each of four sides.

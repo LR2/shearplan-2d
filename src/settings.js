@@ -7,7 +7,7 @@ export const DEFAULT_SETTINGS = {
   effortSec: 10,
   dispFormat: 'frac', fracDen: 16,
   groupingEnabled: true,
-  groupingAggression: 50,
+  groupingAggression: 75,
   groupingMaxYieldLossPP: null,
   groupingMaxExtraSheets: 0,
   groupSingletonsLast: true,

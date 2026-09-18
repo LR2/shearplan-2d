@@ -1,4 +1,5 @@
 import { optimizeCutTree } from './cut-optimizer.js';
+import { DEFAULT_SETTINGS } from './settings.js';
 
 // ============================================================================
 // ShearPlan 2D — core engine (pure JS, no DOM)
@@ -683,17 +684,16 @@ const _now = () => (typeof performance !== 'undefined' && performance.now ? perf
 
 // All grouping tuning constants live here so they can be adjusted after real
 // shop use without hunting through the solver.
-export const GROUPING_SOLVER_VERSION = 2;
+export const GROUPING_SOLVER_VERSION = 3;
 export const GROUPING_TUNING = {
   solverVersion: GROUPING_SOLVER_VERSION,
   // aggression → default maximum gross-yield loss (percentage points),
   // linearly interpolated between rows
   yieldLossByAggression: [
     [0, 0.0],
-    [25, 0.25],
-    [50, 1.0],
-    [75, 2.5],
-    [100, 5.0],
+    [50, 2.5],
+    [75, 5.0],
+    [100, 8.0],
   ],
   // aggression → minimum utilization for a dedicated Auto bulk sheet
   bulkMinUtilByAggression: [
@@ -710,10 +710,9 @@ export const GROUPING_TUNING = {
   archiveLimit: 220,
   presets: [
     { aggression: 0, label: 'Yield First' },
-    { aggression: 25, label: 'Light' },
     { aggression: 50, label: 'Balanced' },
     { aggression: 75, label: 'Strong' },
-    { aggression: 100, label: 'Grouping First' },
+    { aggression: 100, label: 'Ultra' },
   ],
 };
 
@@ -771,7 +770,7 @@ export function fullResultHashOf(stocks, parts, settings) {
   return JSON.stringify({
     base: baselineOptHashOf(stocks, parts, settings),
     g: [
-      !!s.groupingEnabled, s.groupingAggression ?? 50,
+      !!s.groupingEnabled, s.groupingAggression ?? DEFAULT_SETTINGS.groupingAggression,
       s.groupingMaxYieldLossPP ?? null, s.groupingMaxExtraSheets ?? 0,
       s.groupSingletonsLast !== false, s.groupAllowFinalSheetFill !== false,
     ],
@@ -795,6 +794,11 @@ export function interpTable(table, x) {
 
 export function yieldLossAllowancePP(aggression) {
   return interpTable(GROUPING_TUNING.yieldLossByAggression, aggression);
+}
+
+export function groupingAllowancePP(settings, aggression = settings.groupingAggression ?? DEFAULT_SETTINGS.groupingAggression) {
+  const override = settings.groupingMaxYieldLossPP;
+  return override != null && isFinite(override) ? Number(override) : yieldLossAllowancePP(aggression);
 }
 
 export function bulkMinUtil(aggression) {
@@ -1663,8 +1667,6 @@ function levelResultOf(lv, allowancePP, sel, benchmark) {
 
 export function buildLevelResults({ archive, benchmark, settings, sliderAggression, ktRequired }) {
   const maxExtra = Math.max(0, Math.floor(settings.groupingMaxExtraSheets ?? 0));
-  const override = settings.groupingMaxYieldLossPP;
-  const hasOverride = override != null && isFinite(override);
   const levels = GROUPING_TUNING.presets.map((p) => ({ ...p, custom: false }));
   if (
     sliderAggression != null &&
@@ -1674,7 +1676,7 @@ export function buildLevelResults({ archive, benchmark, settings, sliderAggressi
     levels.sort((a, b) => a.aggression - b.aggression);
   }
   return levels.map((lv) => {
-    const allowancePP = hasOverride ? override : yieldLossAllowancePP(lv.aggression);
+    const allowancePP = groupingAllowancePP(settings, lv.aggression);
     const sel = selectForAllowance(archive, allowancePP, maxExtra, benchmark, { ktRequired });
     return levelResultOf(lv, allowancePP, sel, benchmark);
   });
@@ -1783,7 +1785,7 @@ export async function runSearch({
   const estimates = familyEstimates || estimateAllFamilies(gctx.families, stocks, settings, { seed: familySeed ?? seed ?? 0 });
   const idealByPid = new Map();
   for (const [pid, e] of estimates) idealByPid.set(pid, e.idealSheets);
-  const aggression = Math.max(0, Math.min(100, Math.round(settings.groupingAggression ?? 50)));
+  const aggression = Math.max(0, Math.min(100, Math.round(settings.groupingAggression ?? DEFAULT_SETTINGS.groupingAggression)));
   const allowFinalSheetFill = settings.groupAllowFinalSheetFill !== false;
   const ktRequired = gctx.ktPids.size > 0;
   const famCtxList = gctx.families.map((f) => ({ pid: f.pid, label: f.label, qty: f.qty, policy: f.policy }));
@@ -1802,14 +1804,12 @@ export async function runSearch({
     }
     : null;
   const maxExtra = Math.max(0, Math.floor(settings.groupingMaxExtraSheets ?? 0));
-  const override = settings.groupingMaxYieldLossPP;
-  const hasOverride = override != null && isFinite(override);
   const protect = (arch) => {
     if (!benchmark) return [];
     const sigs = [];
     const aggrs = GROUPING_TUNING.presets.map((p) => p.aggression).concat([aggression]);
     for (const a of aggrs) {
-      const allowance = hasOverride ? override : yieldLossAllowancePP(a);
+      const allowance = groupingAllowancePP(settings, a);
       const sel = selectForAllowance(arch, allowance, maxExtra, benchmark, { ktRequired });
       if (sel && sel.cand) sigs.push(sel.cand.sig);
     }
