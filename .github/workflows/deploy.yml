@@ -4,33 +4,104 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_run:
+    workflows: [Validate review preview]
+    branches: [codex-review]
+    types: [completed]
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out production
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: production
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
-      - run: npm run build
+      - name: Build production
+        working-directory: production
+        run: |
+          npm ci
+          npm run build
+      # Use the last passing preview commit so an unfinished or broken review
+      # branch cannot prevent a production update from being published.
+      - name: Find the latest passing review version
+        id: review
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let runs;
+            try {
+              ({ data: runs } = await github.rest.actions.listWorkflowRuns({
+                ...context.repo,
+                workflow_id: 'preview.yml',
+                branch: 'codex-review',
+                event: 'push',
+                status: 'success',
+                per_page: 1,
+              }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const sha = runs?.workflow_runs[0]?.head_sha || '';
+            core.setOutput('sha', sha);
+            if (!sha) core.info('No passing preview yet; publishing production only.');
+      - name: Check out the passing review version
+        if: steps.review.outputs.sha != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.review.outputs.sha }}
+          path: review
+          persist-credentials: false
+      - name: Build review preview
+        if: steps.review.outputs.sha != ''
+        working-directory: review
+        env:
+          VITE_STORAGE_NAMESPACE: 'shearplan:codex-review:'
+        run: |
+          npm ci
+          npm run build
+      - name: Assemble production and preview
+        env:
+          REVIEW_SHA: ${{ steps.review.outputs.sha }}
+        run: |
+          mkdir -p site
+          cp -a production/dist/. site/
+          if [ -n "$REVIEW_SHA" ]; then
+            mkdir -p site/codex-review
+            cp -a review/dist/. site/codex-review/
+            node -e 'require("fs").writeFileSync("site/codex-review/version.json", JSON.stringify({branch: "codex-review", commit: process.env.REVIEW_SHA}) + "\n")'
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
