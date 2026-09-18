@@ -1,4 +1,5 @@
-import { optimizeCutTree } from './cut-optimizer.js';
+import { orderCutNodes } from './cut-optimizer.js';
+import { optimizeSheetLayout } from './sheet-optimizer.js';
 import { DEFAULT_SETTINGS } from './settings.js';
 
 // ============================================================================
@@ -172,8 +173,8 @@ export function decodeSheet(stockDims, insts, opt) {
 
   const markPart = (node, inst, rot) => {
     node.kind = 'part';
-    node.part = { pid: inst.pid, label: inst.label, key: inst.key, rot };
-    placements.push({ x: node.x, y: node.y, l: node.l, w: node.w, pid: inst.pid, label: inst.label, key: inst.key, rot, node });
+    node.part = { pid: inst.pid, label: inst.label, key: inst.key, rot, canTurn: !!inst.canTurn };
+    placements.push({ x: node.x, y: node.y, l: node.l, w: node.w, ...node.part, node });
   };
 
   // Evaluate placing (pl,pw) into F. Returns plan or null.
@@ -306,9 +307,7 @@ function pieceLetter(i) {
 
 export function sequenceCuts(sheetRes, ctx) {
   // ctx: { minRemL, minRemW, ox, oy } offsets of usable area within blank
-  const { cutsRaw } = sheetRes;
-  const sorted = [...cutsRaw].sort((a, b) =>
-    a.cut.stage - b.cut.stage || a.cut.ci - b.cut.ci);
+  const sorted = orderCutNodes(sheetRes);
   const names = new Map();
   names.set(sheetRes.root.id, 'BLANK');
   let letterIdx = 0;
@@ -429,6 +428,12 @@ export function decodePlan(stocks, orderedInsts, settings, variant) {
 // Shared post-processing for decodePlan and decodePlanGrouped: classify
 // offcuts, compute stats, sequence cuts, group identical layouts, and build
 // production runs (adjacent identical sheets merged, production order kept).
+function layoutSignature(stock, placements) {
+  return stock.id + '|' + placements
+    .map((p) => [p.x, p.y, p.l, p.w, p.pid].map((v) => typeof v === 'number' ? Math.round(v * 1e4) : v).join(','))
+    .sort().join(';');
+}
+
 export function finalizePlan(stocks, remaining, sheets, settings) {
   const { trimL, trimR, trimT, trimB, minRemL, minRemW } = settings;
   const costMode = stocks.length > 0 && stocks.every((s) => s.cost != null && isFinite(s.cost));
@@ -454,9 +459,7 @@ export function finalizePlan(stocks, remaining, sheets, settings) {
     const pA = sh.placedArea;
     const sA = stock.len * stock.wid;
     usedArea += sA; placedArea += pA; remnantArea += remA; cutCount += seqd.rows.length;
-    const sig = stock.id + '|' + res.placements
-      .map((p) => [p.x, p.y, p.l, p.w, p.pid].map((v) => typeof v === 'number' ? Math.round(v * 1e4) : v).join(','))
-      .sort().join(';');
+    const sig = layoutSignature(stock, res.placements);
     return {
       stock, ox, oy, trR: trimR, trB: trimB, sourceTree: res,
       placements: res.placements.map((p) => ({ x: p.x + ox, y: p.y + oy, l: p.l, w: p.w, pid: p.pid, label: p.label, rot: p.rot })),
@@ -500,51 +503,84 @@ export function finalizePlan(stocks, remaining, sheets, settings) {
   };
 }
 
-// Refine only the selected solutions, rather than paying for a full cut-tree
-// search for every nesting candidate. Geometry and sheet order stay fixed.
+// Cache exact instances as well as geometry: identical repeated layouts carry
+// different part keys, which must never be copied from another sheet.
+function layoutCacheKey(sv, settings) {
+  return JSON.stringify([sv.sig, settings,
+    sv.sourceTree?.placements.map((p) => [p.key, p.rot, p.canTurn]).sort(),
+    sv.cuts.map((c) => [c.dir, c.gauge, c.pieceRect, c.stage])]);
+}
+
+function optimizeSheetView(sv, settings, layoutCache) {
+  if (!sv.sourceTree) return sv;
+  const cacheKey = layoutCacheKey(sv, settings);
+  if (layoutCache.has(cacheKey)) return layoutCache.get(cacheKey);
+  const { maxStage, half } = CUT_TYPES[settings.cutType] || CUT_TYPES['3'];
+  const tree = optimizeSheetLayout(sv.sourceTree, { ...settings, maxStage, half }, decodeSheet);
+  const seq = sequenceCuts(tree, { ...settings, ox: sv.ox, oy: sv.oy });
+  const offcuts = tree.frees.map((f) => ({
+    x: f.x + sv.ox, y: f.y + sv.oy, l: f.l, w: f.w,
+    type: settings.remnantsEnabled && !f.dead &&
+      Math.max(f.l, f.w) >= Math.max(settings.minRemL, settings.minRemW) - EPS &&
+      Math.min(f.l, f.w) >= Math.min(settings.minRemL, settings.minRemW) - EPS ? 'remnant' : 'scrap',
+  }));
+  const remnantArea = offcuts.filter((o) => o.type === 'remnant').reduce((a, o) => a + o.l * o.w, 0);
+  const next = { ...sv, sourceTree: tree, cuts: seq.rows, gaugeSettings: seq.gaugeSettings,
+    placements: tree.placements.map((p) => ({ x: p.x + sv.ox, y: p.y + sv.oy,
+      l: p.l, w: p.w, pid: p.pid, label: p.label, rot: p.rot })),
+    sig: layoutSignature(sv.stock, tree.placements),
+    offcuts, remnantArea, netYield: sv.placedArea / Math.max(sv.stockArea - remnantArea, EPS),
+    cutsBeforeOptimization: sv.cutsBeforeOptimization ?? sv.cuts.length };
+  layoutCache.set(cacheKey, next);
+  return next;
+}
+
+// Sheet assignments and production order remain fixed. Only the arrangements
+// inside selected sheets are refined; grouping limits and material use cannot
+// change. Rebuild layout references so drawings, runs and reports all agree.
 export function optimizeSolutionCuts(sol, settings, layoutCache = new Map()) {
   if (!sol) return sol;
-  const { maxStage, half } = CUT_TYPES[settings.cutType] || CUT_TYPES['3'];
-  const sheets = sol.sheets.map((sv) => {
-    if (!sv.sourceTree) return sv;
-    const cacheKey = sv.sig + '|' + JSON.stringify(sv.cuts.map((c) => [c.dir, c.gauge, c.pieceRect, c.stage]));
-    if (layoutCache.has(cacheKey)) return layoutCache.get(cacheKey);
-    const tree = optimizeCutTree(sv.sourceTree, { ...settings, maxStage, half });
-    const seq = sequenceCuts(tree, { ...settings, ox: sv.ox, oy: sv.oy });
-    const offcuts = tree.frees.map((f) => ({
-      x: f.x + sv.ox, y: f.y + sv.oy, l: f.l, w: f.w,
-      type: settings.remnantsEnabled && !f.dead &&
-        Math.max(f.l, f.w) >= Math.max(settings.minRemL, settings.minRemW) - EPS &&
-        Math.min(f.l, f.w) >= Math.min(settings.minRemL, settings.minRemW) - EPS ? 'remnant' : 'scrap',
-    }));
-    const remnantArea = offcuts.filter((o) => o.type === 'remnant').reduce((a, o) => a + o.l * o.w, 0);
-    const next = { ...sv, sourceTree: tree, cuts: seq.rows, gaugeSettings: seq.gaugeSettings,
-      offcuts, remnantArea, netYield: sv.placedArea / Math.max(sv.stockArea - remnantArea, EPS),
-      cutsBeforeOptimization: sv.cuts.length };
-    layoutCache.set(cacheKey, next);
-    return next;
-  });
-  const byLayout = new Map(sol.sheets.map((old, i) => [old, sheets[i]]));
+  const sheets = sol.sheets.map((sv) => optimizeSheetView(sv, settings, layoutCache));
+  const groupsMap = new Map();
+  for (const sv of sheets) {
+    if (!groupsMap.has(sv.sig)) groupsMap.set(sv.sig, { layout: sv, repeat: 0 });
+    groupsMap.get(sv.sig).repeat++;
+  }
+  const groups = [...groupsMap.values()].sort((a, b) => b.layout.netYield - a.layout.netYield);
+  const runs = buildProductionRuns(sheets);
+  const cleanup = new Set();
+  for (const run of sol.runs) {
+    if (run.cleanup) for (let i = run.startSheet; i <= run.endSheet; i++) cleanup.add(i);
+  }
+  for (const run of runs) run.cleanup = cleanup.has(run.startSheet);
   const remnantArea = sheets.reduce((a, s) => a + s.remnantArea, 0);
   const cutCount = sheets.reduce((a, s) => a + s.cuts.length, 0);
   const costBasis = sheets.reduce((a, s) => a + (sol.stats.costMode ? s.stock.cost : s.stockArea), 0);
   const effCost = costBasis - (settings.remnantsEnabled ? (settings.remRate ?? 0) / 99 : 0) *
     remnantArea * (sol.stats.usedArea > 0 ? costBasis / sol.stats.usedArea : 1);
-  return { ...sol, sheets,
-    groups: sol.groups.map((g) => ({ ...g, layout: byLayout.get(g.layout) })),
-    runs: sol.runs.map((r) => ({ ...r, layout: byLayout.get(r.layout) })),
+  return { ...sol, sheets, groups, runs,
     stats: { ...sol.stats, remnantArea, cutCount,
-      cutsBeforeOptimization: sol.stats.cutCount,
+      cutsBeforeOptimization: sol.stats.cutsBeforeOptimization ?? sol.stats.cutCount,
       netYield: sol.stats.usedArea > remnantArea ? sol.stats.placedArea / (sol.stats.usedArea - remnantArea) : 0,
       totalGaugeSettings: sheets.reduce((a, s) => a + s.gaugeSettings, 0) },
     fitness: [sol.uncutCount, effCost, -remnantArea, cutCount] };
 }
 
-export async function refineResultCuts(result, settings) {
+export async function refineResultCuts(result, settings, { onProgress, shouldStop } = {}) {
   const solutions = new Map(), layouts = new Map();
+  const pending = [result.sol, result.baselineSol, result.bestGrossYieldSol, result.benchmark?.sol,
+    ...(result.levelResults || []).map((level) => level.sol)].filter(Boolean);
+  const total = new Set(pending.flatMap((sol) => sol.sheets.map((sv) => layoutCacheKey(sv, settings)))).size;
   const refine = async (sol) => {
     if (!sol || solutions.has(sol)) return solutions.get(sol) || sol;
-    await _sleep(0);
+    for (const sv of sol.sheets) {
+      const key = layoutCacheKey(sv, settings);
+      if (layouts.has(key)) continue;
+      await _sleep(0); // let the browser paint progress and handle Stop between sheets
+      if (shouldStop?.()) layouts.set(key, sv);
+      else layouts.set(key, optimizeSheetView(sv, settings, layouts));
+      onProgress?.({ completed: layouts.size, total });
+    }
     const refined = optimizeSolutionCuts(sol, settings, layouts);
     solutions.set(sol, refined);
     return refined;
@@ -558,7 +594,7 @@ export async function refineResultCuts(result, settings) {
     next.levelResults = [];
     for (const level of result.levelResults) {
       const sol = await refine(level.sol);
-      next.levelResults.push({ ...level, sol, netYield: sol.stats.netYield });
+      next.levelResults.push({ ...level, sol, netYield: sol.stats.netYield, sig: planSignature(sol) });
     }
   }
   return next;
@@ -675,16 +711,16 @@ export function findOversize(parts, stocks, settings) {
 // A part family is one part row, keyed by the stable internal p.id (labels are
 // display-only and may be blank or duplicated). The grouping feature works in
 // the search / ordering / sheet-eligibility / candidate-comparison / output-
-// sequencing layers only: it never moves parts after decodeSheet() has run.
-// Every alternative arrangement comes from re-running the decoder with a
-// different valid order or eligibility phase.
+// sequencing layers. A final per-sheet pass may rearrange assigned parts, but
+// never transfers them between blanks or changes the production sheet order,
+// so family grouping constraints and comparisons remain valid.
 
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const _now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
 // All grouping tuning constants live here so they can be adjusted after real
 // shop use without hunting through the solver.
-export const GROUPING_SOLVER_VERSION = 3;
+export const GROUPING_SOLVER_VERSION = 4;
 export const GROUPING_TUNING = {
   solverVersion: GROUPING_SOLVER_VERSION,
   // aggression → default maximum gross-yield loss (percentage points),

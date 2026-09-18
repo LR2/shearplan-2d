@@ -1194,8 +1194,13 @@ export default function App() {
         best: best !== undefined ? best : (pr ? pr.best : null),
       }));
     const finish = async (pending) => {
-      setProgress({ phase: 'Refining cut sequences', iters: 0, elapsed: 0, denomMs: null, best: null });
-      const res = await refineResultCuts(pending, s);
+      setProgress({ phase: 'Optimizing sheet layouts and cuts', iters: 0, elapsed: 0, denomMs: null, best: null });
+      const res = await refineResultCuts(pending, s, { shouldStop,
+        onProgress: ({ completed, total }) => setProgress({
+          phase: `Optimizing sheet layouts and cuts — ${completed} / ${total}`,
+          iters: 0, elapsed: 0, denomMs: null, best: null,
+        }),
+      });
       setResult(res);
       setRunning(false);
       setProgress(null);

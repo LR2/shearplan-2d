@@ -55,14 +55,28 @@ commit can be checked at `codex-review/version.json`.
   Editing a value switches to Custom. Selecting Custom retains the current values.
 - The four search-effort buttons set the time per search phase. Grouping uses
   separate baseline and grouped phases.
-- After nesting, the cut sequencer compares alternate guillotine trees for each
-  selected layout, minimizing cut count first and total cut length second. It
-  can trim a common edge before separating parts. It preserves part geometry,
-  kerf, first-cut direction, stage limits, and enabled saved remnants. The search
-  is bounded for responsiveness and keeps the original valid sequence if it
-  cannot improve it; this is not a guarantee of a global minimum. Initial blank
-  edge trims are still performed before the listed production cuts.
+- After sheet assignments are selected, a second nesting pass tries family rows,
+  columns, grids, and allowed rotations within each sheet. It then rebuilds a
+  complete guillotine cut tree, minimizing cut count first, total cut length
+  second, and gauge changes when those tie. Ready cuts within a stage reuse the
+  current gauge where possible. This applies with grouping on or off and to
+  every grouping comparison level.
+- The final pass keeps the exact part instances on each blank, stock sizes,
+  sheet order, gross yield, rotation locks, kerf, first-cut direction, stage
+  limits, and existing saved drops. Drawings, cut lists, repeat counts and reports
+  are rebuilt from the same final geometry. It reports progress and supports
+  stopping between sheets. Initial blank edge trims are still performed before
+  the listed production cuts.
+- Repacking is bounded: at most 128 block combinations, 6,000 packing trials
+  (fewer for larger sheets), and 24 candidate layouts receive cut-tree searches.
+  Sheets above 256 parts still receive fixed-layout cut refinement. The existing
+  valid plan remains the fallback; this is not a guarantee of a global minimum.
+- The supplied 120 × 48 example with four plenums, two wraps and four caps is a
+  regression fixture. Its 18-cut layout becomes a 12-cut, three-stage layout at
+  the same 91.53% gross yield, with 36′2″ of cutting versus CutLogic's reported
+  38′8″. The cap row is rotated to share trims and the plenums stay together.
 - Printing works from Results and Report. Report options control the printed
   copy, including cut sequences when layout drawings are unchecked.
 
-Run `npm test` for the cutting-geometry, settings and storage regression tests.
+Run `npm test` for the cutting geometry, sheet repacking, grouping, settings and
+storage regression tests.
