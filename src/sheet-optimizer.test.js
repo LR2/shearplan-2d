@@ -18,6 +18,32 @@ function suppliedSheet(opt = options()) {
 }
 const counts = (sheet) => [...sheet.sourceTree.placedKeys].sort();
 
+test('the evaluated cleanup sheet batches gauges from 10 to 9 without adding cuts or travel', () => {
+  const f = JSON.parse(readFileSync(new URL('./fixtures/gauge-batching-sheet.json', import.meta.url)));
+  for (const transpose of [false, true]) {
+    const opt = options({ firstCut: transpose ? 'h' : 'v', choice: 'BSSF', splitPref: transpose ? 'h' : 'v' });
+    const dims = { uL: transpose ? 120 : 60, uW: transpose ? 60 : 120 };
+    // Keep every part in its printed orientation, including when transposing
+    // the entire sheet to exercise horizontal batching.
+    const instances = f.placements.map((p) => ({ ...p, canTurn: false,
+      l: transpose ? p.w : p.l, w: transpose ? p.l : p.w }));
+    const original = decodeSheet(dims, instances, opt);
+    assert.equal(original.placements.length, 8);
+    assert.deepEqual(cutTreeScore(original), [f.reported.cuts, f.reported.cutLength, f.reported.gauges]);
+    const next = optimizeSheetLayout(original, opt, decodeSheet);
+    validate(original, next, opt, { allowMoves: true });
+    assert.deepEqual(cutTreeScore(next), [f.expected.cuts, f.reported.cutLength, f.expected.gauges]);
+    const stock = { ...f.stock, len: dims.uL, wid: dims.uW };
+    const placedArea = original.placements.reduce((sum, p) => sum + p.l * p.w, 0);
+    const sol = finalizePlan([stock], [], [{ stock, res: original, placedArea }], opt);
+    const refined = optimizeSolutionCuts(sol, opt);
+    assert.equal(refined.stats.grossYield, sol.stats.grossYield);
+    assert.equal(refined.stats.totalGaugeSettings, 9);
+    assert.equal(refined.runs[0].layout.gaugeSettings, 9);
+    assert.equal(refined.stats.cutCount, 12);
+  }
+});
+
 test('the supplied mixed-family sheet improves from 18 cuts to 12 without changing yield', () => {
   const opt = options();
   const original = suppliedSheet(opt);

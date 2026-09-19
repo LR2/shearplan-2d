@@ -1,0 +1,109 @@
+{
+  "description": "Ultra report dated 2026-09-19, sheet 28: batch the 16-inch and 11-7/8-inch strips without changing sheet membership.",
+  "stock": {
+    "id": "s",
+    "len": 60,
+    "wid": 120,
+    "qty": 1,
+    "cost": null
+  },
+  "placements": [
+    {
+      "x": 0.0,
+      "y": 0.0,
+      "l": 16.0,
+      "w": 71.75,
+      "pid": "3192K1",
+      "label": "3192K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "3192K1-0"
+    },
+    {
+      "x": 16.0,
+      "y": 0.0,
+      "l": 11.875,
+      "w": 86.625,
+      "pid": "2270K1",
+      "label": "2270K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "2270K1-1"
+    },
+    {
+      "x": 27.875,
+      "y": 0.0,
+      "l": 11.875,
+      "w": 86.625,
+      "pid": "2271K1",
+      "label": "2271K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "2271K1-2"
+    },
+    {
+      "x": 39.75,
+      "y": 0.0,
+      "l": 16.0,
+      "w": 63.375,
+      "pid": "1267K1",
+      "label": "1267K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "1267K1-3"
+    },
+    {
+      "x": 39.75,
+      "y": 63.375,
+      "l": 16.0,
+      "w": 55.875,
+      "pid": "3197K1",
+      "label": "3197K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "3197K1-4"
+    },
+    {
+      "x": 0.0,
+      "y": 71.75,
+      "l": 16.0,
+      "w": 47.25,
+      "pid": "3198K1",
+      "label": "3198K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "3198K1-5"
+    },
+    {
+      "x": 16.0,
+      "y": 86.625,
+      "l": 11.875,
+      "w": 28.5,
+      "pid": "2272K1",
+      "label": "2272K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "2272K1-6"
+    },
+    {
+      "x": 27.875,
+      "y": 86.625,
+      "l": 11.875,
+      "w": 28.25,
+      "pid": "3200K1",
+      "label": "3200K1",
+      "rot": true,
+      "canTurn": true,
+      "key": "3200K1-7"
+    }
+  ],
+  "reported": {
+    "cuts": 12,
+    "gauges": 10,
+    "cutLength": 591.5
+  },
+  "expected": {
+    "cuts": 12,
+    "gauges": 9
+  }
+}

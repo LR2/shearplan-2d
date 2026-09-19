@@ -720,7 +720,7 @@ const _now = () => (typeof performance !== 'undefined' && performance.now ? perf
 
 // All grouping tuning constants live here so they can be adjusted after real
 // shop use without hunting through the solver.
-export const GROUPING_SOLVER_VERSION = 4;
+export const GROUPING_SOLVER_VERSION = 5;
 export const GROUPING_TUNING = {
   solverVersion: GROUPING_SOLVER_VERSION,
   // aggression → default maximum gross-yield loss (percentage points),
@@ -833,6 +833,8 @@ export function yieldLossAllowancePP(aggression) {
 }
 
 export function groupingAllowancePP(settings, aggression = settings.groupingAggression ?? DEFAULT_SETTINGS.groupingAggression) {
+  // Yield First never accepts a yield sacrifice, even with a manual grouping cap.
+  if (aggression === 0) return 0;
   const override = settings.groupingMaxYieldLossPP;
   return override != null && isFinite(override) ? Number(override) : yieldLossAllowancePP(aggression);
 }
@@ -845,6 +847,13 @@ export function bulkMinUtil(aggression) {
 // 92.8% → 91.6% is a loss of 1.2 pp.
 export function yieldLossPPOf(baselineGrossYield, candidateGrossYield) {
   return (baselineGrossYield - candidateGrossYield) * 100;
+}
+
+// The UI and printed report both show gains as positive and losses as negative.
+export function fmtYieldDeltaPP(lossPP) {
+  if (lossPP == null || !Number.isFinite(lossPP)) return '—';
+  if (Math.abs(lossPP) < 0.005) return '±0.00 pp';
+  return `${lossPP < 0 ? '+' : '−'}${Math.abs(lossPP).toFixed(2)} pp`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1513,12 +1522,17 @@ function domVec(c) {
   return [
     c.sol.uncutCount,
     c.metrics.plan.hardPolicyViolations,
+    -c.sol.stats.grossYield,
     c.sol.stats.usedArea,
     c.sol.stats.costMode ? c.sol.stats.totalCost : c.sol.stats.usedArea,
     c.sol.stats.sheetsUsed,
     c.metrics.plan.weightedExcessTouches,
+    c.metrics.plan.familiesAboveBestKnownMinimum,
     c.metrics.plan.familyRunBreaks,
     c.metrics.plan.singletonEarlyCount,
+    c.metrics.plan.familySheetTouches,
+    c.sol.stats.cutCount,
+    c.sol.stats.totalGaugeSettings ?? 0,
   ];
 }
 
@@ -1580,21 +1594,41 @@ export function pruneArchive(archive, limit, opts = {}) {
 // lexicographic comparison — material units, sheet counts, and grouping
 // counts are never collapsed into one weighted number.
 
-export function compareGroupedCandidates(a, b) {
-  const cmp = (x, y, e = 1e-9) => (x < y - e ? -1 : x > y + e ? 1 : 0);
+const cmp = (x, y, e = 1e-9) => (x < y - e ? -1 : x > y + e ? 1 : 0);
+
+function compareGroupingMetrics(a, b) {
   return (
-    cmp(a.sol.uncutCount, b.sol.uncutCount) ||
-    cmp(a.metrics.plan.hardPolicyViolations, b.metrics.plan.hardPolicyViolations) ||
     cmp(a.metrics.plan.weightedExcessTouches, b.metrics.plan.weightedExcessTouches) ||
     cmp(a.metrics.plan.familiesAboveBestKnownMinimum, b.metrics.plan.familiesAboveBestKnownMinimum) ||
     cmp(a.metrics.plan.familyRunBreaks, b.metrics.plan.familyRunBreaks) ||
     cmp(a.metrics.plan.singletonEarlyCount, b.metrics.plan.singletonEarlyCount) ||
-    cmp(a.metrics.plan.familySheetTouches, b.metrics.plan.familySheetTouches) ||
+    cmp(a.metrics.plan.familySheetTouches, b.metrics.plan.familySheetTouches)
+  );
+}
+
+export function compareGroupedCandidates(a, b) {
+  return (
+    cmp(a.sol.uncutCount, b.sol.uncutCount) ||
+    cmp(a.metrics.plan.hardPolicyViolations, b.metrics.plan.hardPolicyViolations) ||
+    compareGroupingMetrics(a, b) ||
     cmp(a.sol.fitness[1], b.sol.fitness[1]) ||
     cmp(a.sol.stats.sheetsUsed, b.sol.stats.sheetsUsed) ||
     cmp(-a.sol.stats.remnantArea, -b.sol.stats.remnantArea) ||
     cmp(a.sol.stats.cutCount, b.sol.stats.cutCount) ||
+    cmp(a.sol.stats.totalGaugeSettings ?? 0, b.sol.stats.totalGaugeSettings ?? 0) ||
     (a.sig < b.sig ? -1 : a.sig > b.sig ? 1 : 0)
+  );
+}
+
+export function compareYieldCandidates(a, b) {
+  return (
+    cmp(a.sol.uncutCount, b.sol.uncutCount) ||
+    cmp(a.metrics.plan.hardPolicyViolations, b.metrics.plan.hardPolicyViolations) ||
+    cmp(b.sol.stats.grossYield, a.sol.stats.grossYield) ||
+    compareGroupingMetrics(a, b) ||
+    cmp(a.sol.stats.cutCount, b.sol.stats.cutCount) ||
+    cmp(a.sol.stats.totalGaugeSettings ?? 0, b.sol.stats.totalGaugeSettings ?? 0) ||
+    compareGroupedCandidates(a, b)
   );
 }
 
@@ -1628,7 +1662,7 @@ export function selectForAllowance(archive, allowancePP, maxExtraSheets, benchma
       pool = anyIn.length ? anyIn : eligible;
     }
   }
-  const sorted = pool.slice().sort(compareGroupedCandidates);
+  const sorted = pool.slice().sort(opts.yieldFirst ? compareYieldCandidates : compareGroupedCandidates);
   return { cand: sorted[0], relaxedForKT, unresolvedKT, comparisonValid };
 }
 
@@ -1674,7 +1708,7 @@ function levelResultOf(lv, allowancePP, sel, benchmark) {
       mp.singletonEarlyCount < bm.singletonEarlyCount ||
       mp.familySheetTouches < bm.familySheetTouches ||
       mp.familiesAtBestKnownMinimum > bm.familiesAtBestKnownMinimum;
-    if (!improved) warnings.push('No grouping improvement was found within the selected yield and sheet limits.');
+    if (!improved && lv.aggression !== 0) warnings.push('No grouping improvement was found within the selected yield and sheet limits.');
   } else {
     warnings.push('This plan places a different part quantity than the ungrouped benchmark — yield deltas are not comparable.');
   }
@@ -1713,7 +1747,7 @@ export function buildLevelResults({ archive, benchmark, settings, sliderAggressi
   }
   return levels.map((lv) => {
     const allowancePP = groupingAllowancePP(settings, lv.aggression);
-    const sel = selectForAllowance(archive, allowancePP, maxExtra, benchmark, { ktRequired });
+    const sel = selectForAllowance(archive, allowancePP, maxExtra, benchmark, { ktRequired, yieldFirst: lv.aggression === 0 });
     return levelResultOf(lv, allowancePP, sel, benchmark);
   });
 }
@@ -1846,7 +1880,7 @@ export async function runSearch({
     const aggrs = GROUPING_TUNING.presets.map((p) => p.aggression).concat([aggression]);
     for (const a of aggrs) {
       const allowance = groupingAllowancePP(settings, a);
-      const sel = selectForAllowance(arch, allowance, maxExtra, benchmark, { ktRequired });
+      const sel = selectForAllowance(arch, allowance, maxExtra, benchmark, { ktRequired, yieldFirst: a === 0 });
       if (sel && sel.cand) sigs.push(sel.cand.sig);
     }
     return sigs;

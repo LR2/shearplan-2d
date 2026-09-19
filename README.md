@@ -49,6 +49,18 @@ commit can be checked at `codex-review/version.json`.
   (Balanced), **5 pp** (Strong), and **8 pp** (Ultra). Slider values between presets
   interpolate those caps. The bar shows an amber warning above **5 pp**, including
   when a manual loss cap overrides the slider.
+- **Yield First** chooses the highest gross yield found in either search, within
+  the placed-quantity, additional-blank and hard Keep Together constraints.
+  Grouping, cut count and gauge settings break yield ties. Its allowance stays
+  at 0 pp even when a manual cap is set for the other levels. The archive protects
+  this winner as well as the other grouping-level winners when pruning.
+- **Ungrouped baseline** means the best gross yield found in the ungrouped phase
+  only; a later grouped candidate can improve on it. All level yield deltas use
+  that baseline, with positive improvements and negative losses in both Results
+  and the printed report. The **Viewing** badge follows the previewed level;
+  the original search setting is labeled separately. The comparison table shows
+  final cuts, gauge settings and family interruptions (resuming a family after
+  other sheets), alongside yield, sheet count and grouping metrics.
 - **Blade & edges → Plate thickness preset** applies the 15 entries supplied in
   `Blade and Edges Presets.xlsx` (Sheet1, rows 2–16). The cut allowance applies to
   both directions; the edge allowance applies separately to each of four sides.
@@ -69,12 +81,19 @@ commit can be checked at `codex-review/version.json`.
   the listed production cuts.
 - Repacking is bounded: at most 128 block combinations, 6,000 packing trials
   (fewer for larger sheets), and 24 candidate layouts receive cut-tree searches.
+  Up to six additional bounded searches batch equal-width strips or equal-height
+  rows and try part-first sequencing to reuse gauges. This final batching step
+  accepts improvements only without adding cuts, cut length or gauge settings.
   Sheets above 256 parts still receive fixed-layout cut refinement. The existing
   valid plan remains the fallback; this is not a guarantee of a global minimum.
 - The supplied 120 × 48 example with four plenums, two wraps and four caps is a
   regression fixture. Its 18-cut layout becomes a 12-cut, three-stage layout at
   the same 91.53% gross yield, with 36′2″ of cutting versus CutLogic's reported
   38′8″. The cap row is rotated to share trims and the plenums stay together.
+- The evaluated 60 × 120 cleanup sheet (sheet 28 of the September 19 Ultra report)
+  is also a regression fixture. Gauge batching reduces its 10 settings to 9,
+  preserving all eight parts, their orientations, 12 cuts, 591.5 inches of cutting
+  and gross yield. The transposed sheet exercises horizontal batching as well.
 - Printing works from Results and Report. Report options control the printed
   copy, including cut sequences when layout drawings are unchecked.
 

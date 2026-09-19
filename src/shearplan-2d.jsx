@@ -11,7 +11,7 @@ import {
 import {
   parseDim, fmtDim, fmtArea, CUT_TYPES,
   findOversize, GROUPING_TUNING, deriveSeeds, baselineOptHashOf,
-  fullResultHashOf, groupingAllowancePP, normalizeGroupPolicy, buildFamilies,
+  fullResultHashOf, groupingAllowancePP, fmtYieldDeltaPP, normalizeGroupPolicy, buildFamilies,
   estimateAllFamilies, tagRunsCleanup, buildLevelResults, runSearch,
 } from './engine.js';
 import { DEFAULT_SETTINGS, BLADE_PRESETS, presetSettings, matchingPreset } from './settings.js';
@@ -707,7 +707,6 @@ function ImportModal({ kind, fmt, onClose, onImport, startIdx }) {
 // ---------------------------------------------------------------------------
 
 const POLICY_LABELS = { auto: 'Auto', keepTogether: 'Keep together', noPreference: 'Normal', cleanup: 'Cut last' };
-const fmtPP = (v) => (v == null ? '—' : (Math.abs(v) < 0.005 ? '0.00' : v.toFixed(2)));
 const fmtDeltaN = (v) => (v == null ? '—' : (v === 0 ? '±0' : (v > 0 ? `+${v}` : `${v}`)));
 
 function GroupingImpactCard({ result, level }) {
@@ -737,18 +736,18 @@ function GroupingImpactCard({ result, level }) {
           <tr className="border-b border-slate-200 text-xs text-slate-500">
             <th className="py-1 pr-2 text-left font-semibold"> </th>
             <th className="py-1 text-right font-semibold">
-              Best yield found — grouping off{' '}
-              <span className="cursor-help text-slate-400" title="Highest-yield ungrouped plan found within the selected search effort. ShearPlan uses a heuristic search and does not certify a mathematical optimum.">ⓘ</span>
+              Ungrouped baseline{' '}
+              <span className="cursor-help text-slate-400" title="Best gross yield from the ungrouped search only. Yield First considers both searches and may improve on this baseline. Neither search certifies a mathematical optimum.">ⓘ</span>
             </th>
-            <th className="py-1 text-right font-semibold">Selected grouped plan — {level.label}</th>
+            <th className="py-1 text-right font-semibold">Viewing — {level.label}</th>
             <th className="py-1 pl-2 text-right font-semibold">Δ</th>
           </tr>
         </thead>
         <tbody>
           <Row strong label="Gross yield" a={pct(b.grossYield)} c={pct(st.grossYield)}
-            d={valid ? (lossPP > 0.005 ? `−${fmtPP(lossPP)} pp` : lossPP < -0.005 ? `+${fmtPP(-lossPP)} pp` : '±0.00 pp') : 'n/a'} />
+            d={valid ? fmtYieldDeltaPP(lossPP) : 'n/a'} />
           <Row label="Net yield" a={pct(b.netYield)} c={pct(st.netYield)}
-            d={valid ? `${((st.netYield - b.netYield) * 100) >= 0 ? '+' : '−'}${Math.abs((st.netYield - b.netYield) * 100).toFixed(2)} pp` : 'n/a'} />
+            d={valid ? fmtYieldDeltaPP((b.netYield - st.netYield) * 100) : 'n/a'} />
           <Row label="Blanks used" a={b.sheetsUsed} c={st.sheetsUsed} d={valid ? fmtDeltaN(st.sheetsUsed - b.sheetsUsed) : 'n/a'} />
           <Row label="Total blank area" a={fmtArea(b.usedArea)} c={fmtArea(st.usedArea)}
             d={valid && level.usedAreaDeltaPct != null ? `${level.usedAreaDeltaPct >= 0 ? '+' : '−'}${Math.abs(level.usedAreaDeltaPct).toFixed(1)}%` : 'n/a'} />
@@ -760,6 +759,7 @@ function GroupingImpactCard({ result, level }) {
           <Row label="Total cuts" a={b.cutCount} c={st.cutCount} d={fmtDeltaN(st.cutCount - b.cutCount)} />
           <Row label="Gauge settings" a={b.totalGaugeSettings} c={st.totalGaugeSettings} d={fmtDeltaN(st.totalGaugeSettings - b.totalGaugeSettings)} />
           <Row label="Family-sheet touches" a={bm.familySheetTouches} c={mp.familySheetTouches} d={fmtDeltaN(mp.familySheetTouches - bm.familySheetTouches)} />
+          <Row label="Family interruptions" a={bm.familyRunBreaks} c={mp.familyRunBreaks} d={fmtDeltaN(mp.familyRunBreaks - bm.familyRunBreaks)} />
           <Row label="Families at best-known minimum" a={`${bm.familiesAtBestKnownMinimum}/${bm.quantityFamilyCount}`} c={`${mp.familiesAtBestKnownMinimum}/${mp.quantityFamilyCount}`}
             d={fmtDeltaN(mp.familiesAtBestKnownMinimum - bm.familiesAtBestKnownMinimum)} />
           <Row label="Cleanup sheets" a={bm.cleanupSheetCount} c={mp.cleanupSheetCount} d={fmtDeltaN(mp.cleanupSheetCount - bm.cleanupSheetCount)} />
@@ -779,50 +779,68 @@ function GroupingImpactCard({ result, level }) {
 }
 
 function LevelCompareTable({ result, activeAggr, onPick }) {
+  const searchLevel = result.levelResults.find((l) => l.aggression === result.selectedAggression);
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-baseline justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
         <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Grouping levels — same search, {result.levelResults.length} answers</div>
-        <div className="text-xs text-slate-400">Click a row to preview it — no re-run needed</div>
+        <div className="text-xs text-slate-500">Search setting: {searchLevel?.label || 'Custom'}. Click a row to preview it.</div>
       </div>
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-slate-200">
-            <Th>Level</Th>
-            <Th className="text-right">Gross</Th>
-            <Th className="text-right">Loss</Th>
-            <Th className="text-right">Net</Th>
-            <Th className="text-right">Blanks</Th>
-            <Th className="text-right">Touches</Th>
-            <Th className="text-right">At min</Th>
-            <Th className="text-right">Cleanup</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.levelResults.map((l) => {
-            const active = l.aggression === activeAggr;
-            const mp = l.groupingMetrics.plan;
-            return (
-              <tr key={l.aggression} onClick={() => onPick(l.aggression)}
-                className={cls('cursor-pointer border-b border-slate-100', active ? 'bg-blue-50' : 'hover:bg-slate-50')}>
-                <td className="px-2 py-1.5">
-                  <span className={cls('font-semibold', active && 'text-blue-800')}>{l.label}</span>
-                  {l.aggression === result.selectedAggression && (
-                    <span className="ml-1.5 rounded bg-blue-100 px-1 text-xs font-semibold text-blue-700">Selected</span>
-                  )}
-                </td>
-                <td className="px-2 py-1.5 text-right font-mono">{(l.grossYield * 100).toFixed(1)}%</td>
-                <td className="px-2 py-1.5 text-right font-mono text-slate-500">{l.yieldLossPP == null ? '—' : `${fmtPP(l.yieldLossPP)} pp`}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{(l.netYield * 100).toFixed(1)}%</td>
-                <td className="px-2 py-1.5 text-right font-mono">{l.sheetsUsed}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{mp.familySheetTouches}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{mp.familiesAtBestKnownMinimum}/{mp.quantityFamilyCount}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{mp.cleanupSheetCount}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="overflow-x-auto">
+        <table aria-label="Grouping level comparison" className="w-full min-w-[900px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-200">
+              <Th>Level</Th>
+              <Th className="text-right">Gross</Th>
+              <Th className="text-right whitespace-nowrap">Yield Δ</Th>
+              <Th className="text-right">Net</Th>
+              <Th className="text-right">Blanks</Th>
+              <Th className="text-right">Cuts</Th>
+              <Th className="text-right whitespace-nowrap">Gauge settings</Th>
+              <Th className="text-right">Touches</Th>
+              <Th className="text-right">Interruptions</Th>
+              <Th className="text-right">At min</Th>
+              <Th className="text-right">Cleanup</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.levelResults.map((l) => {
+              const active = l.aggression === activeAggr;
+              const mp = l.groupingMetrics.plan;
+              const st = l.sol.stats;
+              return (
+                <tr key={l.aggression} onClick={() => onPick(l.aggression)}
+                  className={cls('cursor-pointer border-b border-slate-100', active ? 'bg-blue-50' : 'hover:bg-slate-50')}>
+                  <td className="whitespace-nowrap px-2 py-1.5">
+                    <button type="button" aria-label={`Preview ${l.label}`} aria-pressed={active}
+                      onClick={(e) => { e.stopPropagation(); onPick(l.aggression); }}
+                      className={cls('rounded font-semibold focus-visible:outline-2 focus-visible:outline-blue-700', active && 'text-blue-800')}>
+                      {l.label}
+                    </button>
+                    {active && (
+                      <span className="ml-1.5 rounded bg-blue-100 px-1 text-xs font-semibold text-blue-700">Viewing</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono">{(l.grossYield * 100).toFixed(1)}%</td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono text-slate-500">{fmtYieldDeltaPP(l.yieldLossPP)}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{(l.netYield * 100).toFixed(1)}%</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{l.sheetsUsed}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{st.cutCount}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{st.totalGaugeSettings}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{mp.familySheetTouches}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{mp.familyRunBreaks}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{mp.familiesAtBestKnownMinimum}/{mp.quantityFamilyCount}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{mp.cleanupSheetCount}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-500">
+        Yield Δ compares gross yield with the ungrouped baseline; + means an improvement. Interruptions count times a part family resumes after other sheets.
+        {' '}Yield First chooses the highest gross yield found across both searches within the job constraints, then uses grouping and cutting effort to break ties.
+      </div>
     </div>
   );
 }
@@ -997,8 +1015,8 @@ function PrintDoc({ plan, sol, fmt, opts, colorOf, groupingInfo }) {
                 <span className="font-bold uppercase tracking-wider">Part grouping: </span>
                 <span className="font-mono">
                   level {lv.label}
-                  {' · gross '}{(b.grossYield * 100).toFixed(1)}% → {(lv.grossYield * 100).toFixed(1)}%
-                  {lv.yieldLossPP != null ? ` (−${Math.max(0, lv.yieldLossPP).toFixed(2)} pp)` : ''}
+                  {' · gross vs ungrouped baseline '}{(b.grossYield * 100).toFixed(1)}% → {(lv.grossYield * 100).toFixed(1)}%
+                  {lv.yieldLossPP != null ? ` (${fmtYieldDeltaPP(lv.yieldLossPP)})` : ' (different placed quantities)'}
                   {' · blanks '}{b.sheetsUsed} → {lv.sheetsUsed}
                   {' · family-sheet touches '}{bm.familySheetTouches} → {mp.familySheetTouches}
                   {mp.cleanupSheetCount > 0 ? ` · cleanup sheets ${mp.cleanupSheetCount}` : ''}
@@ -1763,7 +1781,9 @@ export default function App() {
                       Grouping strength — {GROUPING_TUNING.presets.find((p) => p.aggression === groupingAggression)?.label || `Custom (${groupingAggression})`}
                     </label>
                     <div id="grouping-allowance" className="text-xs text-slate-500">
-                      {s.groupingMaxYieldLossPP != null && isFinite(s.groupingMaxYieldLossPP)
+                      {groupingAggression === 0
+                        ? 'Highest gross yield found across both searches, within the job constraints'
+                        : s.groupingMaxYieldLossPP != null && isFinite(s.groupingMaxYieldLossPP)
                         ? `Manual cap: up to ${groupingAllowance.toFixed(2)} pp gross-yield loss (overrides the slider's allowance)`
                         : `Accepts up to ${groupingAllowance.toFixed(2)} pp of gross-yield loss for tighter grouping`}
                     </div>
@@ -1795,6 +1815,7 @@ export default function App() {
                       <FloatInput value={s.groupingMaxYieldLossPP} placeholder="auto"
                         ariaLabel="Max gross-yield loss (pp)"
                         onCommit={(v) => setSettings({ groupingMaxYieldLossPP: v })} />
+                      <div className="mt-1 text-xs text-slate-500">Yield First always keeps a 0 pp cap.</div>
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold text-slate-500">Max additional blanks</label>

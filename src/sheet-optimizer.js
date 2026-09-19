@@ -1,4 +1,4 @@
-import { optimizeCutTree, rebuildCutTree, betterCutTree } from './cut-optimizer.js';
+import { optimizeCutTree, rebuildCutTree, betterCutTree, cutTreeScore } from './cut-optimizer.js';
 
 const EPS = 1e-6;
 const rounded = (n) => Math.round(n * 1e6);
@@ -107,6 +107,35 @@ function combinations(options, limit) {
   return result;
 }
 
+// Keep each strip's internal layout intact, but place equal-width rips (or
+// equal-height cross-cuts) together. Item-at-a-time packing often interleaves
+// widths even when two simple strip orders would avoid resetting the gauge.
+function batchedStripLayouts(tree, opt) {
+  if (tree.root.kind !== 'int') return [];
+  const dir = tree.root.cut.dir, axis = dir === 'v' ? 'x' : 'y', size = dir === 'v' ? 'l' : 'w';
+  const kerf = dir === 'v' ? opt.kerfV : opt.kerfH;
+  const strips = [];
+  const collect = (node) => {
+    if (!node) return;
+    if (node.kind === 'int' && node.cut.dir === dir) node.kids.forEach(collect);
+    else strips.push({ node, parts: tree.placements.filter((p) =>
+      p[axis] >= node[axis] - EPS && p[axis] + p[size] <= node[axis] + node[size] + EPS) });
+  };
+  collect(tree.root);
+  const occupied = strips.filter((s) => s.parts.length);
+  const empty = strips.filter((s) => !s.parts.length);
+  if (occupied.length < 2) return [];
+  return [1, -1].map((direction) => {
+    const ordered = occupied.slice().sort((a, b) => direction * (a.node[size] - b.node[size]) || a.node[axis] - b.node[axis]);
+    let position = tree.root[axis];
+    return ordered.concat(empty).flatMap(({ node, parts }) => {
+      const offset = position - node[axis];
+      position += node[size] + kerf;
+      return parts.map((p) => ({ ...p, node: undefined, [axis]: p[axis] + offset }));
+    });
+  });
+}
+
 // Re-nest EXACTLY the parts already assigned to one blank. Candidate generation
 // uses family blocks; each proposal is then rebuilt as a real guillotine tree
 // under the user's stage, first-cut, kerf and remnant constraints. No packing
@@ -169,6 +198,19 @@ export function optimizeSheetLayout(original, options, decode) {
       ...options, maxStates: 2500, maxChecks: 150000,
     });
     if (tree && betterCutTree(tree, best)) best = tree;
+  }
+  // At most six extra bounded tree searches. Preserve material use, cut count
+  // and cut length while improving gauge batching on the final arrangement.
+  for (const placements of [best.placements, ...batchedStripLayouts(best, options)]) {
+    if (protectedDrops.some((drop) => placements.some((p) => intersects(p, drop)))) continue;
+    for (const trimFirst of [true, false]) {
+      const tree = rebuildCutTree({ ...original, placements }, {
+        ...options, trimFirst, maxStates: 2500, maxChecks: 150000,
+      });
+      if (!tree || !betterCutTree(tree, best)) continue;
+      const score = cutTreeScore(tree), previous = cutTreeScore(best);
+      if (score[1] <= previous[1] + EPS && score[2] <= previous[2]) best = tree;
+    }
   }
   return best;
 }

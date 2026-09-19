@@ -52,7 +52,7 @@ export function betterCutTree(a, b) {
 export function rebuildCutTree(original, options) {
   const { kerfH = 0, kerfV = 0, maxStage = 99, half = false,
     firstCut = 'auto', remnantsEnabled = false, minRemL = 0, minRemW = 0,
-    maxStates = 6000, maxChecks = 300000 } = options;
+    maxStates = 6000, maxChecks = 300000, trimFirst = true } = options;
   if (!original.root || !original.placements.length) return null;
   const isRemnant = (n) => !n.dead &&
     Math.max(n.l, n.w) >= Math.max(minRemL, minRemW) - EPS &&
@@ -107,9 +107,10 @@ export function rebuildCutTree(original, options) {
           trim: !left.some((p) => p.isPart) || !right.some((p) => p.isPart) });
       }
     }
-    // Try shared boundary trims before separating individual parts. Balanced
-    // divisions then shorten the search on large grids.
-    candidates.sort((a, b) => Number(b.trim) - Number(a.trim) ||
+    // Shared boundary trims usually save cuts. An alternate traversal favors
+    // separating parts first: equally short trees can then share part gauges
+    // instead of using a different combined-length trim on every strip.
+    candidates.sort((a, b) => (trimFirst ? Number(b.trim) - Number(a.trim) : Number(a.trim) - Number(b.trim)) ||
       Math.abs(a.left.length - a.right.length) - Math.abs(b.left.length - b.right.length));
     let best = null;
     for (const c of candidates) {
