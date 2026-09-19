@@ -1,0 +1,22 @@
+{
+  "description": "User-supplied Run 3 of 6, 120 x 48 blank: 18 ShearPlan cuts versus 12 CutLogic cuts. Zero kerf and edge trims.",
+  "cutlogicReference": { "cuts": 12, "cutLength": 464 },
+  "stock": { "id": "stock", "label": "120 x 48", "len": 120, "wid": 48, "qty": 1, "cost": null },
+  "parts": [
+    { "id": "p", "label": "PLENUM", "len": 46, "wid": 22, "qty": 4, "canTurn": true },
+    { "id": "w", "label": "WRAP", "len": 30, "wid": 14, "qty": 2, "canTurn": true },
+    { "id": "c", "label": "CAP", "len": 12, "wid": 8, "qty": 4, "canTurn": true }
+  ],
+  "placements": [
+    { "pid": "p", "key": "p#0", "x": 0, "y": 0, "l": 22, "w": 46, "rot": true },
+    { "pid": "p", "key": "p#1", "x": 22, "y": 0, "l": 22, "w": 46, "rot": true },
+    { "pid": "p", "key": "p#2", "x": 44, "y": 0, "l": 22, "w": 46, "rot": true },
+    { "pid": "w", "key": "w#0", "x": 66, "y": 0, "l": 14, "w": 30, "rot": true },
+    { "pid": "p", "key": "p#3", "x": 80, "y": 0, "l": 22, "w": 46, "rot": true },
+    { "pid": "w", "key": "w#1", "x": 102, "y": 0, "l": 14, "w": 30, "rot": true },
+    { "pid": "c", "key": "c#0", "x": 66, "y": 30, "l": 12, "w": 8, "rot": false },
+    { "pid": "c", "key": "c#1", "x": 102, "y": 30, "l": 12, "w": 8, "rot": false },
+    { "pid": "c", "key": "c#2", "x": 66, "y": 38, "l": 12, "w": 8, "rot": false },
+    { "pid": "c", "key": "c#3", "x": 102, "y": 38, "l": 12, "w": 8, "rot": false }
+  ]
+}
